@@ -3,7 +3,7 @@
 # Local Network Analysis Hypothesis 2 #
 
 # Set working directory here
-setwd("../data")
+setwd("../Data")
 
 # Load all necessary packages
 ## Mapping
@@ -15,7 +15,7 @@ if(!require(grid)){install.packages('grid'); library(grid)}
 if(!require(viridis)){install.packages('viridis'); library(viridis)} # plot themes
 if(!require(ggpattern)){install.packages('ggpattern'); library(ggpattern)} # heatmap hatches
 if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)}
-if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)}
+if(!require(RColorBrewer)){install.packages('RColorBrewer'); library(RColorBrewer)} # plot themes
 ## Network
 if(!require(network)){install.packages('network'); library(network)} # For assigning coordinates to nodes %v%
 if(!require(RColorBrewer)){install.packages('RColorBrewer'); library(RColorBrewer)} # For strength gradient network colors
@@ -372,7 +372,7 @@ group_list <- lapply(gbi, function(group_matrix) {
 })
 
 # Add HI list
-result_df <- readRDS("result_df.RData")
+result_df <- read.csv("result_df.csv")
 result_df$Group_size <- ifelse(result_df$Period == "1-Before_HAB", 
                                group_list[[1]]$Average_Group_Size[match(result_df$ID, group_list[[1]]$ID)], 
                                ifelse(result_df$Period == "2-During_HAB",
@@ -386,16 +386,18 @@ write.csv(result_df, "result_df.csv")
 
 # Plot the HI behaviors and group sizes for every year
 ggplot(result_df, aes(x = HI, y = Group_size, fill = HI)) +
-  geom_boxplot(outlier.shape = NA) + # Remove outliers
-  geom_jitter(aes(color = HI), width = 0.2, alpha = 0.5) + # Set jitter points color and transparency
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) + # Apply 50% shading to box color
+  geom_jitter(color = "black", width = 0.2, alpha = 0.5) + # Set jitter points to black with transparency
   facet_wrap(~ Period, labeller = labeller(Period = c("1-Before_HAB" = "Before", 
                                                       "2-During_HAB" = "During", 
                                                       "3-After_HAB" = "After"))) +
   labs(x = "Human-centric Behavior", y = "Individuals' Average Group Size") +
+  scale_fill_brewer(palette = "Dark2") + # Apply a prettier color palette
+  theme_minimal() + # Minimal theme with no background
   theme(strip.background = element_blank(),
         strip.text = element_text(size = 12, face = "bold"),
-        panel.grid = element_blank())
-# Unequal variance
+        panel.grid = element_blank(), # Remove gridlines
+        panel.border = element_rect(color = "black", fill = NA)) # Add axis lines
 
 # Look at the difference in HI groups
 ## Check assumptions of anova
