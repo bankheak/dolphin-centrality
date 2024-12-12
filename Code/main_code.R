@@ -9,13 +9,10 @@ setwd("../Data")
 ## Mapping
 if(!require(GGally)){install.packages('GGally'); library(GGally)} # For mapping networks in ggplot
 if(!require(ggraph)){install.packages('ggraph'); library(ggraph)}
-if(!require(ggpattern)){install.packages('ggpattern'); library(ggpattern)}
 if(!require(ggpattern)){install.packages('ggpattern'); library(ggpattern)} # geom_tile_pattern
 if(!require(grid)){install.packages('grid'); library(grid)}
 if(!require(viridis)){install.packages('viridis'); library(viridis)} # plot themes
-if(!require(ggpattern)){install.packages('ggpattern'); library(ggpattern)} # heatmap hatches
 if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)}
-if(!require(RColorBrewer)){install.packages('RColorBrewer'); library(RColorBrewer)} # plot themes
 ## Network
 if(!require(network)){install.packages('network'); library(network)} # For assigning coordinates to nodes %v%
 if(!require(RColorBrewer)){install.packages('RColorBrewer'); library(RColorBrewer)} # For strength gradient network colors
