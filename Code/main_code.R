@@ -421,7 +421,7 @@ summary(f.model)
 # PART 4: Run Model ---------------------------------------------
 
 # Read in data
-result_df <- read.csv("result_df.csv")
+result_df <- readRDS("result_df.RData")
 
 # Make ID numeric
 result_df$numeric_ID <- as.numeric(factor(result_df$ID))
@@ -465,6 +465,9 @@ plot(result_df$Strength ~ result_df$Prop_SD)
 
 ## Check distributions
 hist(result_df$Strength) # normal
+hist(log(result_df$Strength))
+result_df$Strength <- result_df$Strength + 0.000001  # Add a small value to shift all data to positive
+
 ## Fit the linear mixed-effects model with the specified variance structure
 test_model <- lm(Strength ~ Prop_BG * Period + Prop_FG * Period + Prop_SD * Period,
                   data = result_df)
@@ -494,28 +497,20 @@ full_priors <- c(
   )
 
 # Models in brms
-fit_sc.0 <- brm(Strength ~ 1 + (1 | numeric_ID),
-                 chains = 4, iter = 4000, warmup = 3000, family = gaussian, data = result_df)
-fit_sc.1 <- brm(Strength ~ Prop_BG + Prop_FG + Prop_SD + Period + (1 | numeric_ID), 
-                 chains = 4, iter = 4000, warmup = 3000, family = gaussian, data = result_df,
-                prior = full_priors)
-fit_sc.2 <- brm(Strength ~
+fit_sc <- brm(Strength ~
                    Prop_BG * Period + 
                    Prop_FG * Period +
                    Prop_SD * Period + 
                    (1 | numeric_ID),
                  chains = 4, iter = 4000, warmup = 3000, 
-                 family = gaussian, data = result_df, prior = full_priors)
+                 family = lognormal(), data = result_df, prior = full_priors)
 
-loo(fit_sc.0, fit_sc.1, fit_sc.2, compare = T)
-saveRDS(fit_sc.0, "fit_sc.0.RData")
-saveRDS(fit_sc.1, "fit_sc.1.RData")
-saveRDS(fit_sc.2, "fit_sc.2.RData")
-fit_sc.2 <- readRDS("fit_sc.2.RData")
-summary(fit_sc.2)
+saveRDS(fit_sc, "fit_sc.RData")
+fit_sc <- readRDS("fit_sc.RData")
+summary(fit_sc)
 
 # Check for model convergence
-model <- fit_sc.2
+model <- fit_sc
 plot(model)
 pp_check(model) # check to make sure they line up
 
