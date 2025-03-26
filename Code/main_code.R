@@ -31,6 +31,8 @@ if(!require(bayesplot)){install.packages('bayesplot'); library(bayesplot)} # plo
 if(!require(doParallel)){install.packages('doParallel'); library(doParallel)} # Run parallel processing
 if(!require(rstan)){install.packages('rstan'); library(rstan)} # To make STAN run faster
 if(!require(tidybayes)){install.packages('tidybayes'); library(tidybayes)} # get_variables
+if(!require(dplyr)){install.packages('dplyr'); library(dplyr)} 
+if(!require(tidyr)){install.packages('tidyr'); library(tidyr)} 
 
 # Read in full datasheet and list (after wrangling steps)
 list_years <- readRDS("list_years.RData") # (1995-2000)/(2001-2006)/(2007-2012)
@@ -379,7 +381,6 @@ result_df$Group_size <- ifelse(result_df$Period == "1-Before_HAB",
 # Change the factor levels and add factor for Period
 result_df$HI <- factor(result_df$HI, levels = c("NF", "BG", "FG", "SD"))
 result_df$Period <- as.factor(result_df$Period)
-write.csv(result_df, "result_df.csv")
 
 # Plot the HI behaviors and group sizes for every year
 ggplot(result_df, aes(x = HI, y = Group_size, fill = HI)) +
@@ -405,36 +406,68 @@ residuals <- resid(lm_model)
 scaled_residuals <- scale(residuals)
 hist(scaled_residuals) # normal
 
-## Run LMM test for Group size
-# Fit the model again to use lmerTest functions
-f.model <- lmer(Group_size ~ HI * Period + (1 | ID), data = result_df)
+# Help STAN run faster
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
 
-# Check residuals and random effects
-plot(f.model)
-qqnorm(resid(f.model))
-qqline(resid(f.model))
+# Set priors
+full_priors <- c(
+  # Prior for Prop_BG
+  set_prior("normal(0, 1)", class = "b", coef = "Prop_BG"),
+  # Prior for Prop_FG
+  set_prior("normal(0, 1)", class = "b", coef = "Prop_FG"),
+  # Prior for Prop_SD
+  set_prior("normal(0, 1)", class = "b", coef = "Prop_SD")
+)
 
-# Get the summary with p-values
-summary(f.model)
+# Scale variables
+result_df$Group_size <- c(scale(result_df$Group_size))
+result_df$Prop_BG <- c(scale(result_df$Prop_BG))
+result_df$Prop_FG <- c(scale(result_df$Prop_FG))
+result_df$Prop_SD <- c(scale(result_df$Prop_SD))
+
+fit_grp <- brm(Group_size ~
+                Prop_BG * Period + 
+                Prop_FG * Period +
+                Prop_SD * Period + 
+                (1 | numeric_ID),
+              chains = 4, iter = 4000, warmup = 3000, 
+              family = gaussian(), data = result_df, prior = full_priors)
+
+summary(fit_grp)
+saveRDS(fit_grp, "fit_grp.RData")
+
+# Check for model convergence
+model1 <- fit_grp
+plot(model1)
+pp_check(model1) # check to make sure they line up
+
+# Find the significance
+posterior_samples <- as.data.frame(as.matrix(posterior_samples(model1)))
+coefficients <- colnames(posterior_samples)
+mean(posterior_samples$`b_Prop_BG` < 0)
+mean(posterior_samples$`b_Prop_FG` > 0)
+mean(posterior_samples$`b_Prop_SD` > 0)
+mean(posterior_samples$`b_Period3MAfter_HAB` > 0)
+mean(posterior_samples$`b_Prop_BG:Period2MDuring_HAB` < 0)
+mean(posterior_samples$`b_Prop_BG:Period3MAfter_HAB` < 0)
+mean(posterior_samples$`b_Period2MDuring_HAB:Prop_FG` < 0)
+mean(posterior_samples$`b_Period3MAfter_HAB:Prop_FG` < 0)
+mean(posterior_samples$`b_Period2MDuring_HAB:Prop_SD` < 0)
+mean(posterior_samples$`b_Period3MAfter_HAB:Prop_SD` < 0)
+
 
 ###########################################################################
-# PART 4: Run Model ---------------------------------------------
+# PART 4: Run Centrality Model ---------------------------------------------
 
 # Read in data
-result_df <- readRDS("result_df.RData")
+result_df <- read.csv("result_df.csv")
 
 # Make ID numeric
 result_df$numeric_ID <- as.numeric(factor(result_df$ID))
 
 # Make sure there is only one ID in each period
 result_df <- result_df[!duplicated(result_df[c("Period", "ID")]), ]
-
-# # Standardize the variables
-# result_df$Strength <- scale(result_df$Strength)
-# result_df$Group_size <- scale(result_df$Group_size)
-# 
-# # Create a composite score (simple sum of standardized variables)
-# result_df$Social_centrality <- result_df$Strength + result_df$Group_size
 
 # Check var and hists
 var(result_df$Prop_BG)
@@ -465,8 +498,6 @@ plot(result_df$Strength ~ result_df$Prop_SD)
 
 ## Check distributions
 hist(result_df$Strength) # normal
-hist(log(result_df$Strength))
-result_df$Strength <- result_df$Strength + 0.000001  # Add a small value to shift all data to positive
 
 ## Fit the linear mixed-effects model with the specified variance structure
 test_model <- lm(Strength ~ Prop_BG * Period + Prop_FG * Period + Prop_SD * Period,
@@ -496,14 +527,19 @@ full_priors <- c(
   set_prior("normal(0, 1)", class = "b", coef = "Prop_SD")
   )
 
-# Models in brms
+# Scale strength
+result_df$Strength <- c(scale(result_df$Strength))
+result_df$Prop_BG <- c(scale(result_df$Prop_BG))
+result_df$Prop_FG <- c(scale(result_df$Prop_FG))
+result_df$Prop_SD <- c(scale(result_df$Prop_SD))
+
 fit_sc <- brm(Strength ~
                    Prop_BG * Period + 
                    Prop_FG * Period +
                    Prop_SD * Period + 
                    (1 | numeric_ID),
                  chains = 4, iter = 4000, warmup = 3000, 
-                 family = lognormal(), data = result_df, prior = full_priors)
+                 family = gaussian(), data = result_df, prior = full_priors)
 
 saveRDS(fit_sc, "fit_sc.RData")
 fit_sc <- readRDS("fit_sc.RData")
@@ -517,10 +553,12 @@ pp_check(model) # check to make sure they line up
 # Find the significance
 posterior_samples <- as.data.frame(as.matrix(posterior_samples(model)))
 coefficients <- colnames(posterior_samples)
+mean(posterior_samples$`b_Intercept` < 0)
 mean(posterior_samples$`b_Prop_BG` < 0)
-mean(posterior_samples$`b_Prop_FG` > 0)
-mean(posterior_samples$`b_Prop_SD` > 0)
-mean(posterior_samples$`b_Period3MAfter_HAB` > 0)
+mean(posterior_samples$`b_Prop_FG` < 0)
+mean(posterior_samples$`b_Prop_SD` < 0)
+mean(posterior_samples$`b_Period3MAfter_HAB` < 0)
+mean(posterior_samples$`b_Period2MDuring_HAB` < 0)
 mean(posterior_samples$`b_Prop_BG:Period2MDuring_HAB` < 0)
 mean(posterior_samples$`b_Prop_BG:Period3MAfter_HAB` < 0)
 mean(posterior_samples$`b_Period2MDuring_HAB:Prop_FG` < 0)
@@ -529,23 +567,72 @@ mean(posterior_samples$`b_Period2MDuring_HAB:Prop_SD` < 0)
 mean(posterior_samples$`b_Period3MAfter_HAB:Prop_SD` < 0)
 
 # Plot the posterior distribution
-get_variables(model) # Get the names of the parameters
+get_variables(model2) # Get the names of the parameters
 
 ## Period Centrality
 theme_update(text = element_text(family = "sans"))
 
-# Create mcmc_areas plot
-mcmc_plot <- mcmc_intervals(
+# Create mcmc_areas plots
+## DUring and After
+### Extract posterior samples for both models
+posterior_model1 <- as_draws_df(model1) %>%
+  select(b_Period2MDuring_HAB, b_Period3MAfter_HAB) %>%
+  pivot_longer(cols = everything(), names_to = "parameter", values_to = "value") %>%
+  mutate(Model = "Centrality")
+
+posterior_model2 <- as_draws_df(model2) %>%
+  select(b_Period2MDuring_HAB, b_Period3MAfter_HAB) %>%
+  pivot_longer(cols = everything(), names_to = "parameter", values_to = "value") %>%
+  mutate(Model = "Group Size")
+
+### Combine both models into one dataset
+posterior_combined <- bind_rows(posterior_model1, posterior_model2)
+
+### Compute credible intervals with mean point estimate
+posterior_summary <- posterior_combined %>%
+  group_by(parameter, Model) %>%
+  summarise(
+    mean_est = mean(value),          # Point estimate: Mean
+    ll = quantile(value, 0.025),     # 95% lower bound
+    hh = quantile(value, 0.975),     # 95% upper bound
+    ll_outer = quantile(value, 0.005), # 99% lower bound
+    hh_outer = quantile(value, 0.995), # 99% upper bound
+    .groups = "drop"
+  )
+
+### Create MCMC intervals plot
+ggplot(posterior_summary, aes(x = mean_est, xmin = ll, xmax = hh, y = parameter, color = Model)) +
+  geom_pointrange(size = 0.8, position = position_dodge(width = 0.5)) +  # 95% interval
+  geom_errorbar(aes(xmin = ll_outer, xmax = hh_outer), width = 0.3, position = position_dodge(width = 0.5), alpha = 0.5) + # 99% interval
+  scale_color_manual(values = c("Centrality" = "blue", "Group Size" = "red")) +
+  labs(
+    title = "Posterior Parameter Distributions",
+    subtitle = "Comparing effects on Centrality and Group Size",
+    x = "Effect Size",
+    y = "Parameter"
+  ) +
+  scale_y_discrete(labels = c(
+    "b_Period2MDuring_HAB" = "During HAB", 
+    "b_Period3MAfter_HAB" = "After HAB"
+  )) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "sans"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(color = "black"),
+    legend.position = "top"
+  )
+
+## During and After
+mcmc_intervals(
   as.array(model), 
-  pars = c("b_Period3MAfter_HAB", "b_Period2MDuring_HAB"),
-  prob = 0.95, # 95% intervals
+  pars = c("b_Period2MDuring_HAB", "b_Period3MAfter_HAB"),
+  prob = 0.95, # 90% intervals
   prob_outer = 0.99, # 99%
   point_est = "mean"
 ) +
-  labs(
-    title = "Posterior parameter distributions",
-    subtitle = "with medians and 95% intervals"
-  ) +
   theme_minimal() + # Use a minimal theme
   theme(
     text = element_text(family = "sans"), # Set text family
@@ -555,27 +642,15 @@ mcmc_plot <- mcmc_intervals(
     axis.line = element_line(color = "black") # Add axis lines
   )
 
-mcmc_plot + scale_y_discrete(
-  labels = c(
-    "b_Period2MDuring_HAB" = "During HAB", 
-    "b_Period3MAfter_HAB" = "After HAB"
-  )
-)
-
 ## BG
-# Create mcmc_areas plot
-mcmc_plot <- mcmc_intervals(
+mcmc_intervals(
   as.array(model), 
   pars = c("b_Prop_BG:Period2MDuring_HAB", "b_Prop_BG:Period3MAfter_HAB",
            "b_Prop_BG"),
-  prob = 0.90, # 95% intervals
+  prob = 0.95, # 90% intervals
   prob_outer = 0.99, # 99%
   point_est = "mean"
 ) +
-  labs(
-    title = "Posterior parameter distributions",
-    subtitle = "with medians and 95% intervals"
-  ) +
   theme_minimal() + # Use a minimal theme
   theme(
     text = element_text(family = "sans"), # Set text family
@@ -585,16 +660,8 @@ mcmc_plot <- mcmc_intervals(
     axis.line = element_line(color = "black") # Add axis lines
   )
 
-mcmc_plot + scale_y_discrete(
-  labels = c(
-    "b_Prop_BG" = "Begging/Provisioning",
-    "b_Prop_BG:Period2MDuring_HAB" = "BG: During", 
-    "b_Prop_BG:Period3MAfter_HAB" = "BG: After"
-  )
-)
-
 ## FG
-mcmc_plot <- mcmc_intervals(
+mcmc_intervals(
   as.array(model), 
   pars = c("b_Period2MDuring_HAB:Prop_FG", "b_Period3MAfter_HAB:Prop_FG",
            "b_Prop_FG"),
@@ -602,10 +669,6 @@ mcmc_plot <- mcmc_intervals(
   prob_outer = 0.99, # 99%
   point_est = "mean"
 ) +
-  labs(
-    title = "Posterior parameter distributions",
-    subtitle = "with medians and 95% intervals"
-  ) +
   theme_minimal() + # Use a minimal theme
   theme(
     text = element_text(family = "sans"), # Set text family
@@ -615,16 +678,8 @@ mcmc_plot <- mcmc_intervals(
     axis.line = element_line(color = "black") # Add axis lines
   )
 
-mcmc_plot + scale_y_discrete(
-  labels = c(
-    "b_Prop_FG" = "Fixed Gear Foraging",
-    "b_Period2MDuring_HAB:Prop_FG" = "FG: During", 
-    "b_Period3MAfter_HAB:Prop_FG" = "FG: After"
-  )
-)
-
 ## SD
-mcmc_plot <- mcmc_intervals(
+mcmc_intervals(
   as.array(model), 
   pars = c("b_Period2MDuring_HAB:Prop_SD", "b_Period3MAfter_HAB:Prop_SD",
            "b_Prop_SD"),
@@ -632,10 +687,6 @@ mcmc_plot <- mcmc_intervals(
   prob_outer = 0.99, # 99%
   point_est = "mean"
 ) +
-  labs(
-    title = "Posterior parameter distributions",
-    subtitle = "with medians and 95% intervals"
-  ) +
   theme_minimal() + # Use a minimal theme
   theme(
     text = element_text(family = "sans"), # Set text family
@@ -645,20 +696,12 @@ mcmc_plot <- mcmc_intervals(
     axis.line = element_line(color = "black") # Add axis lines
   )
 
-mcmc_plot + scale_y_discrete(
-  labels = c(
-    "b_Prop_SD" = "Scavenging/Depredating",
-    "b_Period2MDuring_HAB:Prop_SD" = "SD: During", 
-    "b_Period3MAfter_HAB:Prop_SD" = "SD: After"
-  )
-)
-
 
 ###########################################################################
 # PART 5: Circular heat map ---------------------------------------------
 
 # Read in rank data
-result_df <- readRDS("result_df.RData")
+result_df <- read.csv("result_df.csv")
 
 # Make sure there is only one ID in each period
 unique_ids <- result_df[!duplicated(result_df[c("Period", "ID")]), ]
@@ -744,6 +787,15 @@ for (period in unique(change_behav_BG$Period)) {
 
 df_long_BG$hatch <- hatch_vect
 
+## Add proportion data
+df_long_BG <- merge(df_long_BG, result_df[,c("ID", "Period", "Prop_BG")], 
+                    by = c("ID", "Period"), all.x = TRUE)
+df_long_BG <- df_long_BG[!duplicated(df_long_BG[c("ID", "Period")]), ]
+
+## Calculate rank of Prop_BG
+df_long_BG$Prop_BG <- rank(df_long_BG$Prop_BG)
+df_long_BG$Prop_BG <- c(scale(df_long_BG$Prop_BG))
+
 ## Filter data to include only rows where hatch is TRUE
 df_hatched <- df_long_BG[df_long_BG$hatch,]
 
@@ -775,13 +827,24 @@ ggplot(df_hatched, aes(x = ID, y = Period, fill = value)) +
   labs(x = "ID", y = "Period", fill = "Strength") +
   coord_polar()
 
-# Map out centrality over time
-## Add proportion data
-df_long_BG <- merge(df_long_BG, result_df[,c("ID", "Period", "Prop_BG")], 
-                    by = c("ID", "Period"), all.x = TRUE)
-## Calculate rank of Prop_BG
-df_long_BG$Prop_BG_Rank <- rank(df_long_BG$Prop_BG)
-## Plot
+# Plot with proportions
+ggplot(df_hatched, aes(x = ID, y = Period, fill = Prop_BG)) +
+  geom_tile() +
+  geom_tile_pattern(data = df_long_BG[!df_long_BG$hatch, ], 
+                    aes(pattern = ID), 
+                    pattern = "stripe", 
+                    pattern_fill = "black", 
+                    pattern_angle = 45, 
+                    pattern_density = 0.1, 
+                    pattern_spacing = 0.025,
+                    color = "white") +
+  scale_fill_viridis(option = "plasma") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "ID", y = "Period", fill = "Prop_BG") +
+  coord_polar()
+
+## Plot Sankey
 ggplot(df_long_BG, aes(x = Period, y = value, group = ID, color = Prop_BG_Rank)) +
   geom_line(color = "black") +  
   geom_point(size = 3) +  
@@ -828,6 +891,14 @@ for (period in unique(change_behav_FG$Period)) {
 }
 df_long_FG$hatch <- hatch_vect
 
+## Add proportion data
+df_long_FG <- merge(df_long_FG, result_df[,c("ID", "Period", "Prop_FG")], 
+                    by = c("ID", "Period"), all.x = TRUE)
+df_long_FG <- df_long_FG[!duplicated(df_long_FG[c("ID", "Period")]), ]
+
+## Calculate rank of Prop_FG
+df_long_FG$Prop_FG <- rank(df_long_FG$Prop_FG)
+
 # Filter data to include only rows where hatch is TRUE
 df_hatched <- df_long_FG[df_long_FG$hatch,]
 
@@ -859,13 +930,24 @@ ggplot(df_hatched, aes(x = ID, y = Period, fill = value)) +
   labs(x = "ID", y = "Period", fill = "Strength") +
   coord_polar()
 
-# Map out centrality over time
-## Add proportion data
-df_long_FG <- merge(df_long_FG, result_df[,c("ID", "Period", "Prop_FG")], 
-                    by = c("ID", "Period"), all.x = TRUE)
-## Calculate rank of Prop_BG
-df_long_FG$Prop_FG_Rank <- rank(df_long_FG$Prop_FG)
-## Plot
+# Plot with proportions
+ggplot(df_hatched, aes(x = ID, y = Period, fill = Prop_FG)) +
+  geom_tile() +
+  geom_tile_pattern(data = df_long_FG[!df_long_FG$hatch, ], 
+                    aes(pattern = ID), 
+                    pattern = "stripe", 
+                    pattern_fill = "black", 
+                    pattern_angle = 45, 
+                    pattern_density = 0.1, 
+                    pattern_spacing = 0.025,
+                    color = "white") +
+  scale_fill_gradient(low = "white", high = "red") +  # Red gradient
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "ID", y = "Period", fill = "Prop_FG") +
+  coord_polar()
+
+## Plot Sankey
 ggplot(df_long_FG, aes(x = Period, y = value, group = ID, color = Prop_FG_Rank)) +
   geom_line(color = "black") +  
   geom_point(size = 3) +  
@@ -900,6 +982,14 @@ for (period in unique(change_behav_SD$Period)) {
   hatch_vect <- c(hatch_vect, hatch)
 }
 df_long_SD$hatch <- hatch_vect
+
+## Add proportion data
+df_long_SD <- merge(df_long_FG, result_df[,c("ID", "Period", "Prop_FG")], 
+                    by = c("ID", "Period"), all.x = TRUE)
+df_long_SD <- df_long_FG[!duplicated(df_long_FG[c("ID", "Period")]), ]
+
+## Calculate rank of Prop_FG
+df_long_SD$Prop_SD <- rank(df_long_SD$Prop_SD)
 
 # Filter data to include only rows where hatch is TRUE
 df_hatched <- df_long_SD[df_long_SD$hatch,]
@@ -938,7 +1028,25 @@ df_long_SD <- merge(df_long_SD, result_df[,c("ID", "Period", "Prop_SD")],
                     by = c("ID", "Period"), all.x = TRUE)
 ## Calculate rank of Prop_BG
 df_long_SD$Prop_SD_Rank <- rank(df_long_SD$Prop_SD)
-## Plot
+
+# Plot with proportions
+ggplot(df_hatched, aes(x = ID, y = Period, fill = Prop_SD)) +
+  geom_tile() +
+  geom_tile_pattern(data = df_long_SD[!df_long_SD$hatch, ], 
+                    aes(pattern = ID), 
+                    pattern = "stripe", 
+                    pattern_fill = "black", 
+                    pattern_angle = 45, 
+                    pattern_density = 0.1, 
+                    pattern_spacing = 0.025,
+                    color = "white") +
+  scale_fill_viridis(option = "plasma") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "ID", y = "Period", fill = "Prop_BG") +
+  coord_polar()
+
+## Plot Sankey
 ggplot(df_long_SD, aes(x = Period, y = value, group = ID, color = Prop_SD_Rank)) +
   geom_line(color = "black") +  
   geom_point(size = 3) +  
@@ -961,13 +1069,21 @@ HI_list <- HI_list[-4] # Get rid of natural foragers
 
 # Read in network object and strength values
 net <- readRDS("net.RData")
-result_df <- readRDS("result_df.RData")
+result_df <- read.csv("result_df.csv")
 
 # Make sure there is only one ID in each period
 result_df <- result_df[!duplicated(result_df[c("Period", "ID")]), ]
 
 # Normalize strength
 result_df$Strength <- (result_df$Strength - min(result_df$Strength)) / (max(result_df$Strength) - min(result_df$Strength))
+
+# Rank the proportions
+result_df$Prop_BG_Rank <- ave(result_df$Prop_BG, result_df$Period, FUN = rank) - 
+  min(ave(result_df$Prop_BG, result_df$Period, FUN = rank))
+result_df$Prop_FG_Rank <- ave(result_df$Prop_FG, result_df$Period, FUN = rank) - 
+  min(ave(result_df$Prop_FG, result_df$Period, FUN = rank))
+result_df$Prop_SD_Rank <- ave(result_df$Prop_SD, result_df$Period, FUN = rank) - 
+  min(ave(result_df$Prop_SD, result_df$Period, FUN = rank))
 
 # ---Plot network---
 # Set up the plotting area with 1 row and 2 columns for side-by-side plots
@@ -997,6 +1113,12 @@ result_df$colors <- viridis(length(result_df$Strength),
                   option = "plasma")[as.numeric(cut(result_df$Strength, 
                                                     breaks = length(result_df$Strength)))]
 
+# Define mapping between ranking columns
+rank_columns <- c("Prop_BG", "Prop_FG", "Prop_SD")
+
+# Set AI threshold (adjust as needed) 
+AI_threshold <- 0.05
+
 # Create an empty list with dimensions num_i x num_j
 plot_list <- vector("list", 3)
 for (i in seq_along(plot_list)) {
@@ -1021,6 +1143,9 @@ for (j in 1:length(HI_list)) {  # Loop through columns first
     period_val <- unique(result_df$Period)[i]
     filtered_df <- subset(result_df, Period == period_val)
     
+    # Select the appropriate ranking column
+    rank_column <- rank_columns[j]
+    
     # Match the filtered dataframe to the vertex names in the graph object
     matched_indices <- match(net[[i]] %v% "vertex.names", filtered_df$ID)
     filtered_df <- filtered_df[matched_indices, ]
@@ -1035,14 +1160,27 @@ for (j in 1:length(HI_list)) {  # Loop through columns first
     # Handle NA values in matched_colors by assigning "black"
     node.colors <- ifelse(is.na(matched_indices), "black", node_colors)
     
-    # Now make node sizes vector
-    node.sizes <- ifelse(node.colors == "black", 0.1, 1)
+    # Extract ranking values and scale node sizes accordingly
+    rank_values <- filtered_df[[rank_column]]
+    scaled_sizes <- round(rank_values + 0.5, 2)
+    
+    # Assign node sizes based on rankings, setting non-engaged nodes to a small size
+    node.sizes <- ifelse(node.colors == "black", 0.1, scaled_sizes)
+    
+    # ---- Edge Filtering Based on AI Threshold ----
+    edge_weights <- net[[i]] %e% "weight"  # Extract edge weights
+    
+    # Assign colors based on threshold
+    edge_colors <- ifelse(edge_weights < AI_threshold, rgb(1, 1, 1, alpha = 0.2), rgb(0.5, 0.5, 0.5, alpha = 0.5))
+    
+    # Set edge colors in the network object
+    net[[i]] %e% "color" <- edge_colors  # Assign color attribute to edges
     
     # Create the plot
     net_plot <- ggnet2(net[[i]],
            mode = combined_layout,
            edge.size = "weight", # edge thickness
-           edge.color = "grey",
+           edge.color = "color",
            size = node.sizes,
            node.label = labeled_nodes,
            label.color = "white", 
